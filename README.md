@@ -34,7 +34,13 @@ Try to get original sprites if possible, for the best quality - pixel art can ge
 
 ### Adding it to the game
 
-To be able to add any character sets to the game, fork this project, and set it up to be served publicly via GitHub Pages, using the option to deploy via a workflow (using the existing "static.yml" workflow - note that this workflow includes an extra step in it to run a script and set up some needed files). If you aren't familiar with using GitHub Pages, a good tutorial on using it is provided by The Odin Project here: https://www.theodinproject.com/lessons/foundations-recipes#viewing-your-project-on-the-web. Or if all of this working with a repo is something you aren't familiar with, other tutorials on this site can help you with that too.
+To be able to add any character sets to the game, fork this project, and set it up to be served publicly via GitHub Pages, setting the "Source" option to GitHub Actions (this will then use the existing "static.yml" workflow which does some required setup and serves the proper folder).
+
+![image](img/pages-source-setting.png)
+
+If you forget this step and change it later, you'll have to force the workflow to publish the site to re-trigger, either by making another change to anything within the "public" folder of the project (you can simply add or remove a space to "public/index.html") or by triggering it yourself from the Actions tab of the project.
+
+If you aren't familiar with using GitHub Pages, a good tutorial on using it is provided by The Odin Project here: https://www.theodinproject.com/lessons/foundations-recipes#viewing-your-project-on-the-web. Or if all of this working with a repo is something you aren't familiar with, other tutorials on this site can help you with that too.
 
 Then, edit the repo by adding in a folder with your character set in the "public/character-sets" folder. The name of the folder will be used exactly as it for the name of the character set. If you want (but you probably don't need to worry about this), you can add an index before the name of the character set in the folder to affect how it's sorted when the options are given to the player, e.g. folders named `1-Undertale` and `2-Deltarune` will put the Undertale character set first, whereas without the indices it would sort alphabetically with Deltarune first.
 
@@ -91,6 +97,31 @@ Then, look at the URL you get. In this case it will be: `https://undertale.wiki/
 
 You can look at the existing "config.json" files in the character sets in this repo for other examples.
 
+#### Applying special modifiers
+
+It's possible to add special modifiers (CSS classes) to either whole character sets or individual character images, to apply some specific effects (listed below).
+
+To apply a modifier to a whole character set, add an entry to its `config.json` file (creating the file in the character set folder if it doesn't exist):
+
+```json
+"cssClass": "class-name other-class-name"
+```
+
+where the value here is a space-separated list of CSS class names to be applied to the whole character set.
+
+To apply a modifier to an individual character image, modify its filename by adding a section before the extension at the end, looking like:
+
+```
+1-Character Name+.class-name.other-class-name.png
+```
+
+Here, `+.` marks the start of the modifier section, and the modifiers afterward are `.`-separated.
+
+In principle, any CSS rule in the `style.css` file which applies to a class can be used as a modifier. You can edit it to add new modifiers by adding new declarations as well. The following modifiers are currently supported:
+
+`smooth-scaling` - By default, images in the game use pixel scaling (no interpolation) to maintain the crispness of the pixel art. This may not be appropriate for all images though (particularly if this is used for characters from other media). The `smooth-scaling` modifier will restore the default scaling, which applies interpolation so non-pixel-art images will tend to look better when scaled up or down from their native resolution.
+
+`pixel-scaling` - This modifier restores the pixel scaling behaviour, which will only have an effect if `smooth-scaling` is applied to the whole character set and this is applied to individual images, where it will take precedence and make those particular images use pixel scaling.
 
 ## Notes for Developers
 
@@ -172,6 +203,8 @@ No substantial differences, just some minor necessary styling differences due to
 **Undertale Yellow:** [Team Undertale Yellow](https://undertaleyellow.wiki.gg/wiki/Developers)
 
 * [Undertale Yellow](https://gamejolt.com/games/UndertaleYellow/136925)
+
+**Deltarune Chapter 1-5 Character Set:** [TomatoRadio](https://github.com/TomatoRadio)
 
 **Font:** m6x11 by [Daniel Linssen](https://managore.itch.io/) (https://managore.itch.io/m6x11)
 

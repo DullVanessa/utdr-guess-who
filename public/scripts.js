@@ -117,7 +117,8 @@ function setSelectByValue(el, val) {
   if (iTarget >= 0) {
     lOptions[iTarget].setAttribute("selected", "true");
   }
-  el.value = lOptions[iTarget].value;
+  if (lOptions[iTarget])
+    el.value = lOptions[iTarget].value;
 }
 
 /**
@@ -364,6 +365,14 @@ function cycleSelect(selectEl) {
 }
 
 /**
+ * Toggles an input element between on and off
+ * @param {Element} inputEl 
+ */
+function toggleInput(inputEl) {
+  inputEl.checked = !inputEl.checked;
+}
+
+/**
  * Simple implementation of an ease-out interpolation to a target value
  * @param {Number} cur 
  * @param {Number} target 
@@ -437,18 +446,20 @@ function exitNameScene() {
 
 function saveSettings() {
   // If any values aren't loaded in sessionStorage, set them now based on inputs
+
+  const cookieInfo = {};
+
   if (!sessionStorage.getItem("name"))
     sessionStorage["name"] = NAME_INPUT.value;
-  if (!sessionStorage.getItem("numGuesses"))
-    sessionStorage["numGuesses"] = SETTINGS_GUESS_SELECT.value;
-  if (!sessionStorage.getItem("cardScale"))
-    sessionStorage["cardScale"] = SETTINGS_SCALE_SELECT.value;
+  cookieInfo["name"] = sessionStorage["name"];
 
-  setCookie({
-    name: sessionStorage["name"],
-    numGuesses: sessionStorage["numGuesses"],
-    cardScale: sessionStorage["cardScale"]
-  });
+  for (let i = 0; i < L_SETTING_NAMES.length; ++i) {
+    if (!sessionStorage.getItem(L_SETTING_NAMES[i]))
+      sessionStorage[L_SETTING_NAMES[i]] = L_SETTING_SOURCES[i].value;
+    cookieInfo[L_SETTING_NAMES[i]] = sessionStorage[L_SETTING_NAMES[i]];
+  }
+
+  setCookie(cookieInfo);
 }
 
 function setName(name) {
@@ -590,6 +601,9 @@ const nameSceneSwitchWatcher = new SceneSwitchWatcher(NAME_SCENE, initNameScene,
 // ---------------------
 
 // Constant DOM references
+const MENU_ISSUE_LINK = document.getElementById("menu-issue-link");
+const MENU_FOLLOW_LINK = document.getElementById("menu-follow-link");
+
 const MENU_START_LINK = document.getElementById("menu-start");
 const MENU_SETTINGS_LINK = document.getElementById("menu-settings");
 const MENU_INSTRUCTIONS_LINK = document.getElementById("menu-instructions");
@@ -605,6 +619,9 @@ const L_MENU_OPTIONS = [...L_MENU_MAIN_OPTIONS, ...L_MENU_CONFIG_OPTIONS];
 
 const CHARSET_OPTION_TEMPLATE = document.getElementById("charset-option-template");
 
+// Globals
+const S_PRELOADED_IMAGES = new Set();
+
 // Functions
 // ---------
 
@@ -618,6 +635,39 @@ function initMenuScene() {
 function exitMenuScene() {
   window.removeEventListener("keydown", navigateMenu);
   window.removeEventListener("resize", fixMenuTabIndex);
+}
+
+/**
+ * Preload an image stored at the provided URL, so it can be loaded faster when needed later
+ * @param {String} url 
+ */
+async function preloadImage(url) {
+  // Check if the image has already been preloaded
+  if (S_PRELOADED_IMAGES.has(url))
+    return;
+  S_PRELOADED_IMAGES.add(url);
+
+  const img = new Image();
+  img.src = url;
+}
+
+/** 
+ * Run tasks when the selected character set is changed:
+ * - Preload the currently-selected character set
+ * - Update the search params in the URL
+ */
+async function onCharsetSelectChange() {
+  const setDirName = MENU_CHARSET_SELECT.value;
+  if (!setDirName) {
+    // Quietly return if no character set is selected; this is just preloading, no need to raise an error if this fails
+    return;
+  }
+
+  loadCharacterSet(setDirName, true);
+
+  // Update the searchparams in the URL to reference the newly-selected character set
+  window.history.replaceState(null, document.title, window.location.pathname + "?charset=" + MENU_CHARSET_SELECT.value);
+
 }
 
 /**
@@ -703,6 +753,7 @@ async function startGame() {
   // Randomly determine the player's character and set it up
   yourCharIndex = Math.floor(Math.random() * getNumChars());
   const yourCharInfo = lCharInfo[yourCharIndex];
+  YOUR_CHAR_CLASSES.className = yourCharInfo.lClasses.join(" ");
   YOUR_CHAR_NAME.textContent = yourCharInfo.name;
   YOUR_CHAR_IMG_FRAME.value = yourCharInfo.name;
   YOUR_CHAR_IMG.setAttribute("alt", yourCharInfo.name);
@@ -846,12 +897,13 @@ async function loadCharacterSetList() {
 
   lCharsetDirs.forEach((charsetDirName) => {
 
-    // Check if this name starts with an index
-    const i = parseInt(charsetDirName.split("-")[0]);
+    // Check if this name starts with a sort key
+    const sortKey = parseFloat(charsetDirName.split("-")[0]);
 
-    if ((i === NaN) || (!charsetDirName.startsWith(i.toString()))) {
-      // Doesn't appear to start with an index, so add it to the unsorted list
+    if ((sortKey === NaN) || (!charsetDirName.startsWith(sortKey.toString()))) {
+      // Doesn't appear to start with a sort key, so add it to the unsorted list
       lUnsortedCharsets.push({
+        sortKey: null,
         // In case it's a Tauri build, replace back spaces in the name of the set
         name: charsetDirName.replaceAll("_", " ").replaceAll("%20", " "),
         dirName: charsetDirName,
@@ -859,23 +911,15 @@ async function loadCharacterSetList() {
       return;
     }
 
-    // This appears to be indexed
-    let charsetNameInfo = {
-      name: charsetDirName.replace(i + "-", "").replaceAll("_", " ").replaceAll("%20", " "),
+    // This appears to have a sort key
+    lSortedCharsets.push({
+      sortKey: sortKey,
+      name: charsetDirName.replace(sortKey + "-", "").replaceAll("_", " ").replaceAll("%20", " "),
       dirName: charsetDirName
-    };
-
-    // Make sure it can fit into the sorted list and isn't already present
-    if (i > lSortedCharsets.length - 1)
-      lSortedCharsets.length = i + i;
-    if (lSortedCharsets[i] !== undefined) {
-      // This index is already in the list, so log an error and add it to the unsorted list
-      console.error("More than one character set has the index " + i + ". Sorting will not appear as intended.");
-      lUnsortedCharsets.push(charsetNameInfo);
-      return;
-    }
-    lSortedCharsets[i] = charsetNameInfo;
+    });
   });
+
+  lSortedCharsets.sort((a, b) => a.sortKey - b.sortKey);
 
   // Fill the options for the character set select box
   const lAllCharsets = [...lSortedCharsets, ...lUnsortedCharsets];
@@ -887,6 +931,15 @@ async function loadCharacterSetList() {
     newCharsetOption.value = charsetNameInfo.dirName;
     MENU_CHARSET_SELECT.appendChild(newCharsetOption);
   });
+
+  // If a character set is in the URL search params, initially select it
+  const searchParams = new URLSearchParams(window.location.search);
+  const initCharset = searchParams.get("charset");
+  if (initCharset)
+    setSelectByValue(MENU_CHARSET_SELECT, initCharset);
+
+  // Preload the initially-selected character set
+  onCharsetSelectChange();
 }
 
 function fixMenuTabIndex() {
@@ -908,6 +961,7 @@ MENU_START_LINK.addEventListener("click", startGame);
 MENU_SETTINGS_LINK.addEventListener("click", () => switchScene(SETTINGS_SCENE));
 MENU_INSTRUCTIONS_LINK.addEventListener("click", () => switchScene(INSTRUCTIONS_SCENE));
 MENU_CREDITS_LINK.addEventListener("click", () => switchScene(CREDITS_SCENE));
+MENU_CHARSET_SELECT.addEventListener("change", onCharsetSelectChange);
 const menuSceneSwitchWatcher = new SceneSwitchWatcher(MENU_SCENE, initMenuScene, exitMenuScene);
 
 
@@ -935,10 +989,13 @@ const L_INSTRUCTIONS_BUTTONS = document.querySelectorAll(".game-instructions");
 const L_SETTINGS_BUTTONS = document.querySelectorAll(".game-settings");
 
 const GUESS_ICON_LINE = document.getElementById("guesses-line");
+const YOUR_CHAR_SET_CLASSES = document.getElementById("your-card-set-classes");
+const YOUR_CHAR_CLASSES = document.getElementById("your-card-classes");
 const YOUR_CHAR_NAME = document.getElementById("your-char-name");
 const YOUR_CHAR_IMG_FRAME = document.getElementById("your-char-img-frame");
 const YOUR_CHAR_IMG = document.getElementById("your-char-img");
 
+const CARD_CLASSES = document.getElementById("card-classes");
 const CARD_GRID = document.getElementById("card-grid");
 
 // Default configuration values
@@ -946,12 +1003,16 @@ const BODY_STYLE = window.getComputedStyle(document.body);
 const DEFAULT_LOOKUP_URL = "https://www.google.com/search?q=Undertale%20Deltarune%20%s&udm=14";
 const DEFAULT_NUM_GUESSES = document.querySelectorAll(".guess-icon").length;
 const DEFAULT_CARD_SCALE = +BODY_STYLE.getPropertyValue('--card-scale');
+const DEFAULT_BG_STYLE = document.getElementById("bg-style-select").value;
+const DEFAULT_BG_FLAVOR = document.getElementById("bg-flavor-select").value;
 const DEFAULT_CARD_WIDTH = parseInt(BODY_STYLE.getPropertyValue('--card-base-img-width')) * DEFAULT_CARD_SCALE;
 const DEFAULT_CARD_HEIGHT = parseInt(BODY_STYLE.getPropertyValue('--card-base-img-height')) * DEFAULT_CARD_SCALE;
+const DEFAULT_CARD_CSS_CLASS = "";
 const DEFAULT_CHARSET_CONFIG = {
   "lookupUrl": DEFAULT_LOOKUP_URL,
   "cardWidth": DEFAULT_CARD_WIDTH,
   "cardHeight": DEFAULT_CARD_HEIGHT,
+  "cssClass": DEFAULT_CARD_CSS_CLASS
 };
 
 // Other constants
@@ -1204,66 +1265,87 @@ function scaleImage(img, frameScale = 1) {
  * Loads all characters in a character set
  * @param {String} setDirName 
  */
-async function loadCharacterSet(setDirName) {
+async function loadCharacterSet(setDirName, preload = false) {
 
   // If this set is already loaded, do nothing
   if (setDirName === loadedCharset)
     return;
 
-  // Unload scale info, which might change with this new set
-  cardScaleInfo = null;
-
   // Load the meta file for the character set
+  let loadingCharsetPath = "";
   if (tauriMode)
-    charsetPath = "character-sets/" + setDirName.replaceAll(" ", "_");
+    loadingCharsetPath = "character-sets/" + setDirName.replaceAll(" ", "_");
   else
-    charsetPath = "character-sets/" + setDirName.replaceAll(" ", "%20");
-  const charMetaUrl = charsetPath + "/char-meta.json";
+    loadingCharsetPath = "character-sets/" + setDirName.replaceAll(" ", "%20");
+  if (!preload)
+    charsetPath = loadingCharsetPath;
+
+  const charMetaUrl = loadingCharsetPath + "/char-meta.json";
   const charsetMeta = await loadJSON(charMetaUrl)
     .catch((err) => alert("ERROR: Could not load character information from " + charMetaUrl + ".\n" +
       "Try refreshing the page in case this is a temporary issue. The error message received was: \n" + err));
 
-  // Get the config for the character set from the meta file
-  charsetConfig = charsetMeta.config;
-  if (charsetConfig === null) {
-    // Use the full default config if none is provided
-    charsetConfig = DEFAULT_CHARSET_CONFIG;
-  } else {
-    // If card width and/or height are present, convert them to integers
-    if (charsetConfig.cardWidth)
-      charsetConfig.cardWidth = parseInt(charsetConfig.cardWidth);
-    if (charsetConfig.cardHeight)
-      charsetConfig.cardHeight = parseInt(charsetConfig.cardHeight);
+  if (!preload) {
 
-    // For card width and height, we handle them explicitly so the user can scale by modifying just one or both
-    if (charsetConfig.cardWidth && !charsetConfig.cardHeight) {
-      // The user set width but not height, so scale the height to match
-      charsetConfig.cardHeight = DEFAULT_CHARSET_CONFIG.cardHeight *
-        (charsetConfig.cardWidth / DEFAULT_CHARSET_CONFIG.cardWidth);
-    } else if (charsetConfig.cardHeight && !charsetConfig.cardWidth) {
-      // The user set height but not width, so scale the width to match
-      charsetConfig.cardWidth = DEFAULT_CHARSET_CONFIG.cardWidth *
-        (charsetConfig.cardHeight / DEFAULT_CHARSET_CONFIG.cardHeight);
-    }
-    // If the user set both, we don't need to do anything. If they set neither, the standard filling in of details below
-    // will handle it
+    // Unload scale info, which might change with this new set
+    cardScaleInfo = null;
 
-    // Check for any missing values in the config and fill them with defaults
-    for (const [key, val] of Object.entries(DEFAULT_CHARSET_CONFIG)) {
-      if (!charsetConfig[key])
-        charsetConfig[key] = val;
+    // Get the config for the character set from the meta file
+    charsetConfig = charsetMeta.config;
+    if (charsetConfig === null) {
+      // Use the full default config if none is provided
+      charsetConfig = DEFAULT_CHARSET_CONFIG;
+    } else {
+      // If card width and/or height are present, convert them to integers
+      if (charsetConfig.cardWidth)
+        charsetConfig.cardWidth = parseInt(charsetConfig.cardWidth);
+      if (charsetConfig.cardHeight)
+        charsetConfig.cardHeight = parseInt(charsetConfig.cardHeight);
+
+      // For card width and height, we handle them explicitly so the user can scale by modifying just one or both
+      if (charsetConfig.cardWidth && !charsetConfig.cardHeight) {
+        // The user set width but not height, so scale the height to match
+        charsetConfig.cardHeight = DEFAULT_CHARSET_CONFIG.cardHeight *
+          (charsetConfig.cardWidth / DEFAULT_CHARSET_CONFIG.cardWidth);
+      } else if (charsetConfig.cardHeight && !charsetConfig.cardWidth) {
+        // The user set height but not width, so scale the width to match
+        charsetConfig.cardWidth = DEFAULT_CHARSET_CONFIG.cardWidth *
+          (charsetConfig.cardHeight / DEFAULT_CHARSET_CONFIG.cardHeight);
+      }
+      // If the user set both, we don't need to do anything. If they set neither, the standard filling in of details below
+      // will handle it
+
+      // Check for any missing values in the config and fill them with defaults
+      for (const [key, val] of Object.entries(DEFAULT_CHARSET_CONFIG)) {
+        if (!charsetConfig[key])
+          charsetConfig[key] = val;
+      }
     }
+
+    // Apply config options as appropriate
+    document.documentElement.style.setProperty("--card-base-img-width",
+      charsetConfig.cardWidth / DEFAULT_CARD_SCALE + "px");
+    document.documentElement.style.setProperty("--card-base-img-height",
+      charsetConfig.cardHeight / DEFAULT_CARD_SCALE + "px");
   }
 
-  // Apply config options as appropriate
-  document.documentElement.style.setProperty("--card-base-img-width",
-    charsetConfig.cardWidth / DEFAULT_CARD_SCALE + "px");
-  document.documentElement.style.setProperty("--card-base-img-height",
-    charsetConfig.cardHeight / DEFAULT_CARD_SCALE + "px");
-
   // Fetch the characters in the set from the meta file
-  lCharImageNames = charsetMeta.chars;
+  const lLoadingCharImageNames = charsetMeta.chars;
+
+  // If we're just preloading, we can do so now and then return without setting everything up
+  if (preload) {
+    lLoadingCharImageNames.forEach((charImgName) => {
+      preloadImage(loadingCharsetPath + "/" + charImgName);
+    });
+    return;
+  }
+
+  lCharImageNames = lLoadingCharImageNames;
   const dCharInfo = {};
+
+  // Set any classes that apply to the whole character set
+  CARD_CLASSES.className = charsetConfig.cssClass;
+  YOUR_CHAR_SET_CLASSES.className = charsetConfig.cssClass;
 
   // Clear any present character cards
   document.querySelectorAll(".character-card").forEach((el) => el.remove());
@@ -1272,7 +1354,7 @@ async function loadCharacterSet(setDirName) {
   const lSortedChars = [];
   const lUnsortedChars = [];
 
-  lCharImageNames.forEach((charImgName) => {
+  lLoadingCharImageNames.forEach((charImgName) => {
 
     let escapedCharImgName = charImgName;
     if (tauriMode)
@@ -1280,21 +1362,37 @@ async function loadCharacterSet(setDirName) {
     else
       escapedCharImgName = charImgName.replace(" ", "%20");
 
+    let prettyCharName = charImgName.replace(/.png$/, "").replaceAll("_", " ").replaceAll("%20", " ");
+
+    // Check for any classes specific to this character in the image name
+    let charClassStr = "";
+    const lCharNameClassSegments = prettyCharName.split("+.");
+    if (lCharNameClassSegments.length == 2) {
+      [prettyCharName, charClassStr] = lCharNameClassSegments;
+    } else if (lCharNameClassSegments > 2) {
+      prettyCharName = lCharNameClassSegments[0];
+      charClassStr = lCharNameClassSegments.slice(1).join(".");
+    }
+    const lCharClasses = charClassStr.split(".");
+
     // Check if this name starts with an index
-    let i = parseInt(charImgName.split("-")[0]);
+    const i = parseInt(charImgName.split("-")[0]);
     if ((i === NaN) || (!charImgName.startsWith(i.toString()))) {
       // Doesn't appear to start with an index, so add it to the unsorted list
       lUnsortedChars.push({
         imgName: escapedCharImgName,
-        name: charImgName.replace(".png", "").replaceAll("_", " ").replaceAll("%20", " ")
+        name: prettyCharName,
+        lClasses: lCharClasses
       });
       return;
     }
 
     // This appears to be indexed
+    prettyCharName = prettyCharName.replace(i + "-", "");
     let charInfo = {
       imgName: escapedCharImgName,
-      name: charImgName.replace(i + "-", "").replace(".png", "").replaceAll("_", " ").replaceAll("%20", " ")
+      name: prettyCharName,
+      lClasses: lCharClasses
     };
 
     // Make sure it can fit into the sorted list and isn't already present
@@ -1319,14 +1417,23 @@ async function loadCharacterSet(setDirName) {
     lCharInfo.push(charInfo);
     const newCard = document.importNode(CHARACTER_CARD_TEMPLATE.content, true).querySelector(".character-card");
 
+    // Set the character name for the appropriate elements
     newCard.querySelector(".character-img-frame").value = charInfo.name;
     newCard.querySelector(".character-name").textContent = charInfo.name;
 
+    // Set the image filename for the appropriate elements
     const imgEl = newCard.querySelector(".character-img");
     const inspectImgEl = newCard.querySelector(".inspect-img");
     imgEl.setAttribute("alt", charInfo.name);
     inspectImgEl.setAttribute("alt", charInfo.name);
 
+    // Add any custom classes to the card
+    charInfo.lClasses.forEach((cssClass) => {
+      if (cssClass)
+        newCard.classList.add(cssClass);
+    });
+
+    // Start loading the image
     ++numImagesLoading;
     ++numImagesToLoadTotal;
     imgEl.onload = () => {
@@ -1344,9 +1451,10 @@ async function loadCharacterSet(setDirName) {
       updateLoadingPercent();
     }
 
-    imgEl.setAttribute("src", charsetPath + "/" + charInfo.imgName);
-    inspectImgEl.setAttribute("src", charsetPath + "/" + charInfo.imgName);
+    imgEl.setAttribute("src", loadingCharsetPath + "/" + charInfo.imgName);
+    inspectImgEl.setAttribute("src", loadingCharsetPath + "/" + charInfo.imgName);
 
+    // Set up events for the card
     const frameEl = newCard.querySelector(".character-img-frame");
     frameEl.addEventListener("click", flipCard);
     frameEl.addEventListener("dblclick", markCard);
@@ -1918,16 +2026,29 @@ const SETTINGS_GUESS_SELECT = document.getElementById("num-guesses-select");
 const SETTINGS_SCALE_LABEL = document.getElementById("card-scale-label");
 const SETTINGS_SCALE_SELECT = document.getElementById("card-scale-select");
 const SETTINGS_SCALE_IMG = document.getElementById("example-character-img");
+const SETTINGS_BG_FLAVOR_LABEL = document.getElementById("bg-flavor-label");
+const SETTINGS_BG_FLAVOR_SELECT = document.getElementById("bg-flavor-select");
+const SETTINGS_BG_STYLE_LABEL = document.getElementById("bg-style-label");
+const SETTINGS_BG_STYLE_SELECT = document.getElementById("bg-style-select");
+const SETTINGS_REMEMBER_LABEL = document.getElementById("remember-settings-label");
 const SETTINGS_REMEMBER_BOX = document.getElementById("remember-settings");
 
 const SETTINGS_RESTORE_DEFAULT_BUTTON = document.getElementById("settings-restore-default");
 const SETTINGS_RESTORE_INIT_BUTTON = document.getElementById("settings-restore-init");
 const SETTINGS_BACK_BUTTON = document.getElementById("settings-back");
 
-const L_SETTINGS_OPTIONS = [SETTINGS_NAME_LINK, SETTINGS_GUESS_LABEL, SETTINGS_SCALE_LABEL, SETTINGS_REMEMBER_BOX,
-  SETTINGS_RESTORE_DEFAULT_BUTTON, SETTINGS_RESTORE_INIT_BUTTON, SETTINGS_BACK_BUTTON];
+const L_SETTINGS_OPTIONS = [SETTINGS_NAME_LINK, SETTINGS_GUESS_LABEL, SETTINGS_SCALE_LABEL, SETTINGS_BG_FLAVOR_LABEL,
+  SETTINGS_BG_STYLE_LABEL, SETTINGS_REMEMBER_LABEL, SETTINGS_RESTORE_DEFAULT_BUTTON, SETTINGS_RESTORE_INIT_BUTTON,
+  SETTINGS_BACK_BUTTON];
 
 const SETTINGS_EXAMPLE_CARD = document.getElementById("example-character-card");
+
+// Other constants
+const L_SETTING_NAMES = ["numGuesses", "cardScale", "bgFlavor", "bgStyle"];
+const L_SETTING_SOURCES = [SETTINGS_GUESS_SELECT, SETTINGS_SCALE_SELECT, SETTINGS_BG_FLAVOR_SELECT,
+  SETTINGS_BG_STYLE_SELECT];
+const L_SETTINGS_DEFAULTS = [DEFAULT_NUM_GUESSES, DEFAULT_CARD_SCALE, DEFAULT_BG_FLAVOR, DEFAULT_BG_STYLE];
+const L_SETTINGS_ON_UPDATE = [() => 0, () => 0, () => 0, () => 0,];
 
 
 // Functions
@@ -1943,8 +2064,9 @@ function exitSettingsScene() {
   window.removeEventListener("keydown", navigateSettings);
 
   // Save settings on exiting the scene
-  sessionStorage["numGuesses"] = SETTINGS_GUESS_SELECT.value;
-  sessionStorage["cardScale"] = SETTINGS_SCALE_SELECT.value;
+  for (let i = 0; i < L_SETTING_NAMES.length; ++i) {
+    sessionStorage[L_SETTING_NAMES[i]] = L_SETTING_SOURCES[i].value;
+  }
 
   // If the user desires, store the value in a cookie to remember it
   if (SETTINGS_REMEMBER_BOX.checked) {
@@ -1967,6 +2089,23 @@ function updateCardScale() {
   const inspectImgScale = window.getComputedStyle(YOUR_CHAR_IMG).getPropertyValue('--your-char-scale');
   document.querySelectorAll(".inspect-img").forEach((el) => scaleImage(el, inspectImgScale));
 }
+L_SETTINGS_ON_UPDATE[L_SETTING_NAMES.indexOf("cardScale")] = updateCardScale;
+
+/**
+ * Update the CSS background style property
+ */
+function updateBgStyle() {
+  document.documentElement.setAttribute("bg-style", SETTINGS_BG_STYLE_SELECT.value);
+}
+L_SETTINGS_ON_UPDATE[L_SETTING_NAMES.indexOf("bgStyle")] = updateBgStyle;
+
+/**
+ * Update the CSS background flavor property
+ */
+function updateBgFlavor() {
+  document.documentElement.setAttribute("bg-flavor", SETTINGS_BG_FLAVOR_SELECT.value);
+}
+L_SETTINGS_ON_UPDATE[L_SETTING_NAMES.indexOf("bgFlavor")] = updateBgFlavor;
 
 /**
  * Sync the Remember Name and Remember Settings checkboxes
@@ -1976,15 +2115,19 @@ function updateRememberSettings() {
 }
 
 function restoreDefaultSettings() {
-  setSelectByValue(SETTINGS_GUESS_SELECT, DEFAULT_NUM_GUESSES);
-  setSelectByValue(SETTINGS_SCALE_SELECT, DEFAULT_CARD_SCALE);
-  updateCardScale();
+  for (let i = 0; i < L_SETTING_NAMES.length; ++i) {
+    setSelectByValue(L_SETTING_SOURCES[i], L_SETTINGS_DEFAULTS[i]);
+    L_SETTINGS_ON_UPDATE[i]();
+  }
 }
 
 function restoreInitSettings() {
-  setSelectByValue(SETTINGS_GUESS_SELECT, initSettings["numGuesses"]);
-  setSelectByValue(SETTINGS_SCALE_SELECT, initSettings["cardScale"]);
-  updateCardScale();
+  for (let i = 0; i < L_SETTING_NAMES.length; ++i) {
+    if (Object.keys(initSettings).includes(L_SETTING_NAMES[i])) {
+      setSelectByValue(L_SETTING_SOURCES[i], initSettings[L_SETTING_NAMES[i]]);
+      L_SETTINGS_ON_UPDATE[i]();
+    }
+  }
 }
 
 /**
@@ -2025,6 +2168,15 @@ function navigateSettings(e) {
       } else if (el == SETTINGS_SCALE_LABEL) {
         cycleSelect(SETTINGS_SCALE_SELECT);
         updateCardScale();
+      } else if (el == SETTINGS_BG_FLAVOR_LABEL) {
+        cycleSelect(SETTINGS_BG_FLAVOR_SELECT);
+        updateBgFlavor();
+      } else if (el == SETTINGS_BG_STYLE_LABEL) {
+        cycleSelect(SETTINGS_BG_STYLE_SELECT);
+        updateBgStyle();
+      } else if (el == SETTINGS_REMEMBER_LABEL) {
+        toggleInput(SETTINGS_REMEMBER_BOX);
+        updateRememberSettings();
       } else {
         el.click();
       }
@@ -2040,13 +2192,13 @@ function navigateSettings(e) {
     return;
   }
 
-  // move to the next or previous item, and loop around if necessary
+  // move to the next or previous item, stopping at the ends
   currentIndex += dir;
   if (currentIndex < 0) {
-    currentIndex = L_SETTINGS_OPTIONS.length - 1;
+    currentIndex = 0;
   }
   else if (currentIndex >= L_SETTINGS_OPTIONS.length) {
-    currentIndex = 0;
+    currentIndex = L_SETTINGS_OPTIONS.length - 1;
   }
   L_SETTINGS_OPTIONS[currentIndex].focus({ focusVisible: true });
 
@@ -2056,7 +2208,11 @@ function navigateSettings(e) {
 // -----
 
 SETTINGS_NAME_LINK.addEventListener("click", () => switchScene(NAME_SCENE));
-SETTINGS_SCALE_SELECT.addEventListener("change", updateCardScale);
+
+for (let i = 0; i < L_SETTING_NAMES.length; ++i) {
+  L_SETTING_SOURCES[i].addEventListener("change", L_SETTINGS_ON_UPDATE[i]);
+}
+
 SETTINGS_REMEMBER_BOX.addEventListener("change", updateRememberSettings);
 
 SETTINGS_RESTORE_DEFAULT_BUTTON.addEventListener("click", restoreDefaultSettings);
@@ -2107,9 +2263,13 @@ window.onload = function () {
     () => { NAME_REMEMBER_BOX.checked = false; SETTINGS_REMEMBER_BOX.checked = false });
 
   // Get and apply other saved settings
-  loadSetting("numGuesses", () => setSelectByValue(SETTINGS_GUESS_SELECT, initSettings.numGuesses));
-  loadSetting("cardScale", () => setSelectByValue(SETTINGS_SCALE_SELECT, initSettings.cardScale));
+  for (let i = 0; i < L_SETTING_NAMES.length; ++i) {
+    loadSetting(L_SETTING_NAMES[i], () => setSelectByValue(L_SETTING_SOURCES[i], initSettings[L_SETTING_NAMES[i]]));
+  }
+
   updateCardScale();
+  updateBgStyle();
+  updateBgFlavor();
 
   fixMenuTabIndex();
   loadCharacterSetList().then(() => {
